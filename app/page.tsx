@@ -24,7 +24,12 @@ export default function Home() {
     
     try {
       setJoined(true);
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true }).catch(err => {
+        console.error('Error accessing media:', err);
+        alert('Could not access camera/microphone. Please check permissions.');
+        setJoined(false);
+        throw err;
+      });
       streamRef.current = stream;
       setLocalStream(stream);
       
@@ -43,7 +48,21 @@ export default function Home() {
       };
 
       const iceCandidates: RTCIceCandidateInit[] = [];
+      const incomingIceCandidates: RTCIceCandidateInit[] = [];
       let remoteId: string | null = null;
+
+      const flushIncomingIceCandidates = async () => {
+        while (incomingIceCandidates.length > 0) {
+          const candidate = incomingIceCandidates.shift();
+          if (candidate) {
+            try {
+              await pc.addIceCandidate(candidate);
+            } catch (err) {
+              console.error('Error adding queued ICE candidate:', err);
+            }
+          }
+        }
+      };
 
       pc.onicecandidate = (e) => {
         if (e.candidate) {
@@ -55,30 +74,55 @@ export default function Home() {
         }
       };
 
+      let isOfferer = false;
+
       socket.on('user-joined', async (id: string) => {
         remoteId = id;
+        isOfferer = true;
         iceCandidates.forEach(c => socket.emit('ice-candidate', c, id));
-        const offer = await pc.createOffer();
-        await pc.setLocalDescription(offer);
-        socket.emit('offer', offer, id);
+        try {
+          const offer = await pc.createOffer();
+          await pc.setLocalDescription(offer);
+          socket.emit('offer', offer, id);
+        } catch (err) {
+          console.error('Error creating offer:', err);
+        }
       });
 
       socket.on('offer', async (offer: RTCSessionDescriptionInit, fromId: string) => {
+        if (pc.signalingState !== 'stable') return;
         remoteId = fromId;
-        await pc.setRemoteDescription(offer);
-        iceCandidates.forEach(c => socket.emit('ice-candidate', c, fromId));
-        const answer = await pc.createAnswer();
-        await pc.setLocalDescription(answer);
-        socket.emit('answer', answer, fromId);
+        try {
+          await pc.setRemoteDescription(offer);
+          iceCandidates.forEach(c => socket.emit('ice-candidate', c, fromId));
+          await flushIncomingIceCandidates();
+          const answer = await pc.createAnswer();
+          await pc.setLocalDescription(answer);
+          socket.emit('answer', answer, fromId);
+        } catch (err) {
+          console.error('Error handling offer:', err);
+        }
       });
 
       socket.on('answer', async (answer: RTCSessionDescriptionInit) => {
-        await pc.setRemoteDescription(answer);
+        if (pc.signalingState !== 'have-local-offer') return;
+        try {
+          await pc.setRemoteDescription(answer);
+          await flushIncomingIceCandidates();
+        } catch (err) {
+          console.error('Error setting answer:', err);
+        }
       });
 
       socket.on('ice-candidate', async (candidate: RTCIceCandidateInit) => {
-        if (pc.remoteDescription) {
-          await pc.addIceCandidate(candidate);
+        try {
+          if (pc.remoteDescription) {
+            await pc.addIceCandidate(candidate);
+          } else {
+            incomingIceCandidates.push(candidate);
+          }
+        } catch (err) {
+          console.error('Error adding ICE candidate:', err);
         }
       });
 

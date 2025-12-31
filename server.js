@@ -32,7 +32,6 @@ app.prepare().then(() => {
       const otherClients = clients.filter(id => id !== socket.id);
       if (otherClients.length > 0) {
         socket.emit('user-joined', otherClients[0]);
-        socket.to(otherClients[0]).emit('user-joined', socket.id);
       }
     });
     
