@@ -22,6 +22,16 @@ export default function Home() {
   const joinRoom = async () => {
     if (!roomCode) return;
     
+    if (typeof window !== 'undefined' && !window.isSecureContext) {
+      alert('Camera/microphone access requires HTTPS or localhost. Please access via https://localhost:3000 or https://127.0.0.1:3000');
+      return;
+    }
+    
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      alert('Camera/microphone access not available. Please use a modern browser and ensure you are on HTTPS or localhost.');
+      return;
+    }
+    
     try {
       setJoined(true);
       const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true }).catch(err => {
